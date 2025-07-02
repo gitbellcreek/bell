@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heading Beeper</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        #main-container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .control-group {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+        }
+        #heading-display, #position-display {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        input[type="range"] {
+            width: 70%;
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <h1>Heading Beeper</h1>
+        <div class="control-group">
+            <div id="heading-display">Current Heading: --</div>
+            <div id="position-display">Position: --</div>
+        </div>
+        <div class="control-group">
+            <div id="status-message" style="color: red; margin-bottom: 10px;"></div>
+            <canvas id="compass" width="300" height="300"></canvas>
+        </div>
+        <div class="control-group">
+            <button id="set-heading">Set Current Heading</button>
+        </div>
+        <div class="control-group">
+            <button id="start-stop">Start</button>
+        </div>
+        <div class="control-group">
+            <h2>Settings</h2>
+            <div class="slider-container">
+                <label for="volume">Volume:</label>
+                <input type="range" id="volume" min="0" max="1" step="0.1" value="0.5">
+            </div>
+            <div class="slider-container">
+                <label for="max-frequency">Max Frequency:</label>
+                <input type="range" id="max-frequency" min="200" max="2000" step="100" value="1000">
+            </div>
+        </div>
+    </div>
+    <script>
+        const headingDisplay = document.getElementById('heading-display');
+        const positionDisplay = document.getElementById('position-display');
+        const setHeadingBtn = document.getElementById('set-heading');
+        const startStopBtn = document.getElementById('start-stop');
+        const volumeSlider = document.getElementById('volume');
+        const maxFrequencySlider = document.getElementById('max-frequency');
+        const statusMessage = document.getElementById('status-message');
+        const compassCanvas = document.getElementById('compass');
+        const compassCtx = compassCanvas.getContext('2d');
+
+        let audioContext;
+        let oscillator;
+        let gainNode;
+
+        let currentHeading = 0;
+        let targetHeading = 0;
+        let startPosition = null;
+        let isTracking = false;
+
+        // Function to initialize audio
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                oscillator = audioContext.createOscillator();
+                gainNode = audioContext.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                oscillator.start();
+            }
+        }
+
+        // Compass Drawing
+        function drawCompass() {
+            const radius = compassCanvas.width / 2;
+            compassCtx.clearRect(0, 0, compassCanvas.width, compassCanvas.height);
+
+            // Draw compass rose
+            compassCtx.beginPath();
+            compassCtx.arc(radius, radius, radius - 10, 0, 2 * Math.PI);
+            compassCtx.fillStyle = '#eee';
+            compassCtx.fill();
+            compassCtx.strokeStyle = '#ccc';
+            compassCtx.lineWidth = 5;
+            compassCtx.stroke();
+
+            // Draw heading markers
+            for (let i = 0; i < 360; i += 10) {
+                const angle = (i - 90) * Math.PI / 180;
+                const x1 = radius + (radius - 20) * Math.cos(angle);
+                const y1 = radius + (radius - 20) * Math.sin(angle);
+                const x2 = radius + (radius - 10) * Math.cos(angle);
+                const y2 = radius + (radius - 10) * Math.sin(angle);
+                compassCtx.beginPath();
+                compassCtx.moveTo(x1, y1);
+                compassCtx.lineTo(x2, y2);
+                compassCtx.lineWidth = (i % 90 === 0) ? 3 : 1;
+                compassCtx.strokeStyle = (i % 90 === 0) ? '#333' : '#999';
+                compassCtx.stroke();
+            }
+
+            // Draw current heading needle
+            const currentHeadingRad = (currentHeading - 90) * Math.PI / 180;
+            compassCtx.beginPath();
+            compassCtx.moveTo(radius, radius);
+            compassCtx.lineTo(radius + (radius - 30) * Math.cos(currentHeadingRad), radius + (radius - 30) * Math.sin(currentHeadingRad));
+            compassCtx.strokeStyle = 'red';
+            compassCtx.lineWidth = 3;
+            compassCtx.stroke();
+
+            // Draw target heading
+            const targetHeadingRad = (targetHeading - 90) * Math.PI / 180;
+            compassCtx.beginPath();
+            compassCtx.moveTo(radius, radius);
+            compassCtx.lineTo(radius + (radius - 40) * Math.cos(targetHeadingRad), radius + (radius - 40) * Math.sin(targetHeadingRad));
+            compassCtx.strokeStyle = 'blue';
+            compassCtx.lineWidth = 2;
+            compassCtx.stroke();
+        }
+
+        // Device Orientation Event Listener
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientationabsolute', (event) => {
+                if (event.alpha !== null) {
+                    currentHeading = 360 - event.alpha;
+                    headingDisplay.textContent = `Current Heading: ${currentHeading.toFixed(2)}°`;
+                    drawCompass();
+                }
+            }, true);
+        } else {
+            alert("Device orientation not supported.");
+        }
+
+        // Geolocation Watcher
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition((position) => {
+                const { latitude, longitude } = position.coords;
+                positionDisplay.textContent = `Position: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+                if (isTracking && startPosition) {
+                    updateDeviation(latitude, longitude);
+                }
+            }, (error) => {
+                statusMessage.textContent = 'Geolocation error: ' + error.message + '. Please ensure you are on a secure (HTTPS) connection.';
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 5000
+            });
+        } else {
+            alert("Geolocation not supported.");
+        }
+
+        // Button Event Listeners
+        setHeadingBtn.addEventListener('click', () => {
+            targetHeading = currentHeading;
+            drawCompass();
+            alert(`Heading set to ${targetHeading.toFixed(2)}°`);
+        });
+
+        compassCanvas.addEventListener('click', (event) => {
+            const rect = compassCanvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            const radius = compassCanvas.width / 2;
+            const angle = Math.atan2(y - radius, x - radius) * 180 / Math.PI;
+            targetHeading = (angle + 90 + 360) % 360;
+            drawCompass();
+        });
+
+        startStopBtn.addEventListener('click', () => {
+            if (targetHeading === null) {
+                alert("Please set a heading first.");
+                return;
+            }
+            isTracking = !isTracking;
+            if (isTracking) {
+                initAudio();
+                navigator.geolocation.getCurrentPosition(position => {
+                    startPosition = position.coords;
+                });
+                startStopBtn.textContent = "Stop";
+                startStopBtn.style.backgroundColor = "#f44336";
+            } else {
+                if (oscillator) {
+                    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                }
+                startStopBtn.textContent = "Start";
+                startStopBtn.style.backgroundColor = "#4CAF50";
+                startPosition = null;
+            }
+        });
+
+        // ... (rest of the audio and calculation functions remain the same) ...
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // metres
+            const φ1 = lat1 * Math.PI / 180; // φ, λ in radians
+            const φ2 = lat2 * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const y = Math.sin(Δλ) * Math.cos(φ2);
+            const x = Math.cos(φ1) * Math.sin(φ2) -
+                      Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+            const θ = Math.atan2(y, x);
+            return (θ * 180 / Math.PI + 360) % 360; // in degrees
+        }
+
+        // Function to calculate cross-track error
+        function calculateCrossTrackError(lat1, lon1, lat2, lon2, bearing) {
+            const R = 6371e3; // metres
+            const d13 = calculateDistance(lat1, lon1, lat2, lon2);
+            const brg13 = calculateBearing(lat1, lon1, lat2, lon2);
+            const dxt = Math.asin(Math.sin(d13 / R) * Math.sin((brg13 - bearing) * Math.PI / 180)) * R;
+            return dxt;
+        }
+        
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // metres
+            const φ1 = lat1 * Math.PI/180; // φ, λ in radians
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c; // in metres
+        }
+
+
+        // Function to update deviation and audio
+        function updateDeviation(currentLat, currentLon) {
+            const crossTrackError = calculateCrossTrackError(startPosition.latitude, startPosition.longitude, currentLat, currentLon, targetHeading);
+            const maxDeviation = 50; // meters
+            const deviationRatio = Math.min(Math.abs(crossTrackError) / maxDeviation, 1);
+
+            const volume = volumeSlider.value;
+            gainNode.gain.setValueAtTime(deviationRatio * volume, audioContext.currentTime);
+
+            const maxFrequency = maxFrequencySlider.value;
+            let frequency;
+            if (crossTrackError > 0) { // Right of the line
+                frequency = 880 + deviationRatio * (maxFrequency - 880); // High tone
+            } else { // Left of the line
+                frequency = 440 - deviationRatio * (440 - 200); // Low tone
+            }
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        }
+        drawCompass();
+    </script>
+</body>
+</html>
